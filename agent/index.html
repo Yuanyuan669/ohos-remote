@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>ohos-agent</title>
+<style>
+html,body{margin:0;height:100%;background:#0b0f16;color:#e8f0fb;font-family:system-ui,sans-serif}
+#top{display:flex;gap:8px;align-items:center;padding:8px 10px;background:#111720;font-size:12px}
+#status{color:#8fa3bd;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#wrap{position:absolute;inset:44px 0 52px 0;display:flex;align-items:center;justify-content:center;background:#000}
+canvas{max-width:100%;max-height:100%;touch-action:none;background:#000}
+#bar{position:fixed;left:0;right:0;bottom:0;display:flex;gap:6px;padding:8px;background:#111720}
+#bar input{flex:1;min-width:0;background:#151d29;color:#e8f0fb;border:1px solid #24324a;border-radius:8px;padding:8px;font-size:13px}
+button{background:#1e2b40;color:#dce7f7;border:0;border-radius:8px;padding:8px 10px;font-size:12px}
+button.primary{background:#3d7bff;color:#fff}
+#hint{color:#6e8098;font-size:11px;padding:4px 10px}
+</style>
+</head>
+<body>
+<div id="top">
+  <span id="status">连接中…</span>
+  <button id="home">主页</button>
+  <button id="back">返回</button>
+</div>
+<canvas id="screen"></canvas>
+<div id="bar">
+  <input id="text" placeholder="输入文本（先点画面定位焦点）">
+  <button id="send" class="primary">发送</button>
+</div>
+<script>
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d');
+const statusEl = document.getElementById('status');
+const token = new URLSearchParams(location.search).get('token') || '';
+let devW = 0, devH = 0, lastX = 0, lastY = 0, press = null, frames = 0, fpsAt = performance.now(), fps = 0;
+let ws = null;
+
+function setStatus(s) { statusEl.textContent = s; }
+
+function connect() {
+  if (!token) { setStatus('缺少 token，请用带 ?token= 的地址打开'); return; }
+  const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  ws = new WebSocket(proto + location.host + '/ws?token=' + encodeURIComponent(token));
+  ws.binaryType = 'blob';
+  ws.onopen = () => setStatus('已连接 · 等待画面');
+  ws.onclose = () => { setStatus('连接断开'); setTimeout(connect, 1500); };
+  ws.onerror = () => setStatus('连接错误');
+  ws.onmessage = async (ev) => {
+    try {
+      const bmp = await createImageBitmap(ev.data);
+      if (!devW) {
+        devW = bmp.width; devH = bmp.height;
+        canvas.width = devW; canvas.height = devH;
+      }
+      ctx.drawImage(bmp, 0, 0);
+      bmp.close();
+      frames++;
+      const now = performance.now();
+      if (now - fpsAt >= 1000) {
+        fps = frames * 1000 / (now - fpsAt); frames = 0; fpsAt = now;
+        setStatus(`已连接 · ${devW}x${devH} · ${fps.toFixed(1)} fps`);
+      }
+    } catch (e) { setStatus('解码失败'); }
+  };
+}
+
+function toDevice(ev) {
+  const r = canvas.getBoundingClientRect();
+  const x = (ev.clientX - r.left) * (devW / r.width);
+  const y = (ev.clientY - r.top) * (devH / r.height);
+  return [Math.max(0, Math.min(devW - 1, Math.round(x))), Math.max(0, Math.min(devH - 1, Math.round(y)))];
+}
+
+canvas.addEventListener('pointerdown', (e) => { press = [e.clientX, e.clientY]; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointerup', (e) => {
+  if (!press || !ws || ws.readyState !== 1) return;
+  const p0 = press;
+  const [x, y] = toDevice(e);
+  const dx = e.clientX - p0[0], dy = e.clientY - p0[1];
+  press = null;
+  lastX = x; lastY = y;
+  if (Math.abs(dx) + Math.abs(dy) < 10) {
+    ws.send(JSON.stringify({ t: 'tap', x, y }));
+  } else {
+    const [x1, y1] = toDevice({ clientX: p0[0], clientY: p0[1] });
+    ws.send(JSON.stringify({ t: 'swipe', x: x1, y: y1, x2: x, y2: y }));
+  }
+});
+
+document.getElementById('send').onclick = () => {
+  const el = document.getElementById('text');
+  if (!ws || ws.readyState !== 1 || !el.value) return;
+  ws.send(JSON.stringify({ t: 'text', x: lastX, y: lastY, text: el.value }));
+  el.value = '';
+};
+
+document.getElementById('back').onclick = () => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'key', code: 10258 })); };
+document.getElementById('home').onclick = () => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'key', code: 102 })); };
+
+connect();
+</script>
+</body>
+</html>

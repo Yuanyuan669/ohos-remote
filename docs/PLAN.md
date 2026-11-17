@@ -27,3 +27,10 @@ src/app.py    Tkinter UI、坐标映射、输入事件
 ## 后续可选
 - root native server（display HDI + H264 硬编 + hdc fport）提升到 30fps；强绑定 OH 版本。
 - 文件拖拽、剪贴板同步、多设备平铺。
+
+## 设备 agent（局域网原型，2026-11-17）
+
+- `agent/`：Go 单文件，嵌入网页；HTTP 提供页面，WebSocket 推 JPEG 帧并接收输入。
+- 已在设备 root 下验证：`snapshot_display` 必须用 `.jpeg` 后缀；`uitest` 脱离前台会挂住，输入改用 `uinput -T -c/-m`，键盘用 `uinput -K`（ASCII）。
+- 实测：浏览器打开 `http://<设备IP>:8765/?token=...`，1.9fps、可点击/滑动。
+- 待办：文本中文（需 IME/剪贴板）、返回键码验证、鉴权与 TLS、断线重连。
