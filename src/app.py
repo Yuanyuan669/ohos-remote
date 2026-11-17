@@ -1,0 +1,239 @@
+"""Tkinter desktop UI for ohos-remote."""
+
+from __future__ import annotations
+
+import argparse
+import queue
+import time
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+from typing import Optional
+
+from PIL import Image, ImageTk
+
+from hdc import Hdc, HdcError, find_hdc
+from mirror import Mirror
+
+
+class RemoteApp:
+    def __init__(self, root: tk.Tk, hdc_exe: str, target: Optional[str], interval: float):
+        self.root = root
+        self.hdc_exe = hdc_exe
+        self.interval = interval
+        self.hdc: Optional[Hdc] = None
+        self.mirror: Optional[Mirror] = None
+        self.frames: "queue.Queue[tuple[str, object]]" = queue.Queue(maxsize=1)
+        self.image: Optional[Image.Image] = None
+        self.photo: Optional[ImageTk.PhotoImage] = None
+        self.device_w = 0
+        self.device_h = 0
+        self.last_click = (540, 1200)
+        self.press_xy: Optional[tuple[int, int]] = None
+        self.fps = 0.0
+        self._last_frame_at = 0.0
+
+        root.title("ohos-remote")
+        root.geometry("560x920")
+        root.configure(bg="#0b0f16")
+
+        self._build_top()
+        self._build_canvas()
+        self._build_bottom()
+
+        self.refresh_targets()
+        if target:
+            self.target_var.set(target)
+            self.connect()
+
+    def _build_top(self) -> None:
+        bar = tk.Frame(self.root, bg="#0b0f16")
+        bar.pack(fill=tk.X, padx=8, pady=6)
+
+        self.target_var = tk.StringVar()
+        self.combo = ttk.Combobox(bar, textvariable=self.target_var, width=26, state="readonly")
+        self.combo.pack(side=tk.LEFT)
+
+        ttk.Button(bar, text="刷新", command=self.refresh_targets).pack(side=tk.LEFT, padx=4)
+        self.connect_btn = ttk.Button(bar, text="连接", command=self.toggle_connect)
+        self.connect_btn.pack(side=tk.LEFT, padx=4)
+        self.status_var = tk.StringVar(value="未连接")
+        tk.Label(bar, textvariable=self.status_var, fg="#8fa3bd", bg="#0b0f16").pack(side=tk.LEFT, padx=8)
+
+    def _build_canvas(self) -> None:
+        self.canvas = tk.Canvas(self.root, bg="#000000", highlightthickness=0)
+        self.canvas.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+        self.canvas.bind("<ButtonPress-1>", self.on_press)
+        self.canvas.bind("<B1-Motion>", self.on_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_release)
+
+    def _build_bottom(self) -> None:
+        bar = tk.Frame(self.root, bg="#0b0f16")
+        bar.pack(fill=tk.X, padx=8, pady=6)
+
+        tk.Label(bar, text="文本", fg="#8fa3bd", bg="#0b0f16").pack(side=tk.LEFT)
+        self.text_var = tk.StringVar()
+        entry = tk.Entry(bar, textvariable=self.text_var, width=28)
+        entry.pack(side=tk.LEFT, padx=4)
+        entry.bind("<Return>", lambda _e: self.send_text())
+        ttk.Button(bar, text="发送", command=self.send_text).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bar, text="保存截图", command=self.save_png).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bar, text="返回", command=lambda: self.key(2)).pack(side=tk.LEFT, padx=2)
+
+    def refresh_targets(self) -> None:
+        try:
+            targets = Hdc(self.hdc_exe).list_targets()
+        except (HdcError, OSError) as exc:
+            self.status_var.set("hdc 不可用: " + str(exc))
+            return
+        self.combo["values"] = targets
+        if targets and not self.target_var.get():
+            self.target_var.set(targets[0])
+        if not targets:
+            self.status_var.set("未发现设备")
+
+    def toggle_connect(self) -> None:
+        if self.hdc is None:
+            self.connect()
+        else:
+            self.disconnect()
+
+    def connect(self) -> None:
+        target = self.target_var.get().strip()
+        if not target:
+            messagebox.showinfo("ohos-remote", "请先选择设备")
+            return
+        try:
+            hdc = Hdc(self.hdc_exe, target)
+            model = hdc.model()
+        except (HdcError, OSError) as exc:
+            messagebox.showerror("ohos-remote", "连接失败: " + str(exc))
+            return
+        self.hdc = hdc
+        self.mirror = Mirror(hdc, self.frames, self.interval)
+        self.mirror.start()
+        self.connect_btn.configure(text="断开")
+        self.status_var.set(f"{model or target} · 连接中")
+        self.root.after(30, self.poll)
+
+    def disconnect(self) -> None:
+        if self.mirror is not None:
+            self.mirror.stop()
+            self.mirror = None
+        self.hdc = None
+        self.connect_btn.configure(text="连接")
+        self.status_var.set("未连接")
+        self.image = None
+        self.photo = None
+        self.canvas.delete("all")
+
+    def poll(self) -> None:
+        try:
+            kind, value = self.frames.get_nowait()
+        except queue.Empty:
+            kind, value = "", None
+        if kind == "frame" and isinstance(value, Image.Image):
+            now = time.time()
+            if self._last_frame_at > 0:
+                dt = now - self._last_frame_at
+                fps = 1.0 / dt if dt > 0 else 0.0
+                self.fps = self.fps * 0.7 + fps * 0.3 if self.fps else fps
+            self._last_frame_at = now
+            self.show_image(value)
+        elif kind == "error":
+            self.status_var.set("采集失败: " + str(value)[:80])
+        if self.mirror is not None:
+            self.root.after(30, self.poll)
+
+    def show_image(self, img: Image.Image) -> None:
+        self.image = img
+        self.device_w, self.device_h = img.size
+        cw = max(1, self.canvas.winfo_width())
+        ch = max(1, self.canvas.winfo_height())
+        scale = min(cw / img.width, ch / img.height)
+        size = (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
+        scaled = img.resize(size, Image.BILINEAR)
+        self.photo = ImageTk.PhotoImage(scaled)
+        self.canvas.delete("all")
+        self.canvas.create_image(cw // 2, ch // 2, image=self.photo, anchor=tk.CENTER)
+        self.status_var.set(f"{self.fps:.1f} fps · {img.width}x{img.height}")
+        self.root.title(f"ohos-remote - {self.target_var.get()}")
+
+    def canvas_to_device(self, x: int, y: int) -> tuple[int, int]:
+        if self.device_w <= 0:
+            return x, y
+        cw = max(1, self.canvas.winfo_width())
+        ch = max(1, self.canvas.winfo_height())
+        scale = min(cw / self.device_w, ch / self.device_h)
+        dw = self.device_w * scale
+        dh = self.device_h * scale
+        ox = (cw - dw) / 2
+        oy = (ch - dh) / 2
+        dx = int((x - ox) / scale)
+        dy = int((y - oy) / scale)
+        return max(0, min(self.device_w - 1, dx)), max(0, min(self.device_h - 1, dy))
+
+    def on_press(self, event: tk.Event) -> None:
+        self.press_xy = (event.x, event.y)
+
+    def on_drag(self, _event: tk.Event) -> None:
+        pass
+
+    def on_release(self, event: tk.Event) -> None:
+        if self.hdc is None or self.press_xy is None:
+            return
+        px, py = self.press_xy
+        self.press_xy = None
+        dx, dy = self.canvas_to_device(event.x, event.y)
+        ox, oy = self.canvas_to_device(px, py)
+        self.last_click = (dx, dy)
+        try:
+            if abs(event.x - px) + abs(event.y - py) < 12:
+                self.hdc.tap(dx, dy)
+            else:
+                self.hdc.swipe(ox, oy, dx, dy, 200)
+        except HdcError as exc:
+            self.status_var.set("输入失败: " + str(exc))
+
+    def send_text(self) -> None:
+        text = self.text_var.get()
+        if self.hdc is None or not text:
+            return
+        x, y = self.last_click
+        try:
+            self.hdc.input_text(x, y, text)
+            self.text_var.set("")
+        except HdcError as exc:
+            self.status_var.set("输入失败: " + str(exc))
+
+    def key(self, code: int) -> None:
+        if self.hdc is None:
+            return
+        try:
+            self.hdc.key_event(code)
+        except HdcError as exc:
+            self.status_var.set("按键失败: " + str(exc))
+
+    def save_png(self) -> None:
+        if self.image is None:
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png")])
+        if path:
+            self.image.save(path)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="ohos-remote: hdc screen mirror + control")
+    parser.add_argument("--hdc", default=None, help="path to hdc executable")
+    parser.add_argument("--target", default=None, help="device serial / IP:port")
+    parser.add_argument("--fps", type=float, default=2.5, help="capture interval target")
+    args = parser.parse_args()
+
+    exe = args.hdc or find_hdc()
+    interval = 1.0 / max(0.5, args.fps)
+    root = tk.Tk()
+    RemoteApp(root, exe, args.target, interval)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
