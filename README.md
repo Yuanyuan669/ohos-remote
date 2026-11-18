@@ -9,7 +9,7 @@ PC 侧 OpenHarmony 远程查看/控制工具，走 hdc，无需设备端 App/系
 - 鼠标点击/拖拽 → `uitest uiInput click/swipe`
 - 文本发送 → `uitest uiInput inputText`
 - 保存当前截图为 PNG
-- 返回键（`keyEvent 2`，待各机型验证）
+- 返回键：uinput `-K` 键码 **2=Back，1=Home**（本机已实测）
 
 ## 运行
 
@@ -28,3 +28,15 @@ python src\app.py --hdc D:\ohos-tools\sdk\openharmony-4.0-Release\toolchains\hdc
 - 依赖 `snapshot_display` / `uitest`，不同 OH 版本参数可能不同。
 - hdc TCP 模式会暴露调试权限，注意网络安全。
 - 完整设计见 `docs/PLAN.md`。
+
+
+## 设备 agent（局域网/免 PC）
+
+```powershell
+# 推 agent 并后台启动（需要 hdc root；token 自定）
+powershell -ExecutionPolicy Bypass -File scripts\start-agent.ps1 -Token 123456
+# 手机/PC 浏览器打开脚本输出的 http://<IP>:8765/?token=123456
+```
+
+- WebSocket 推 JPEG 帧（约 2 fps），点击/滑动走 `uinput`，文本支持 **ASCII**（中文暂不支持）。
+- agent 为 Go 静态二进制（`agent/`），设备重启后需重新启动；不放仓库（用 `go build` 生成）。
