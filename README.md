@@ -24,7 +24,21 @@ python src\app.py --hdc D:\ohos-tools\sdk\openharmony-4.0-Release\toolchains\hdc
 python src\app.py --target <serial> --h264 192.168.31.27:8766 --h264-size 540x1204
 ```
 
-要求：设备已开启 hdc 调试（root/debuggable 更容易），`hdc list targets` 能看到设备。H264 模式仍需 hdc 发送输入；解码用 `imageio-ffmpeg` 自带 ffmpeg，也可 `--ffmpeg <path>`。设备原生分辨率会通过 hdc 自动探测；仍可用 `--device-size 1080x2408` 覆盖。PoC 点 Stop 后采集服务即停止，需重新启动 PoC 再连接客户端。
+要求：设备已开启 hdc 调试（root/debuggable 更容易），`hdc list targets` 能看到设备。解码用 `imageio-ffmpeg` 自带 ffmpeg，也可 `--ffmpeg <path>`。设备原生分辨率会通过 hdc 自动探测；仍可用 `--device-size 1080x2408` 覆盖。PoC 点 Stop 后采集服务即停止，需重新启动 PoC 再连接客户端。
+
+### 低延迟输入（推荐）
+
+设备端 agent 会创建常驻虚拟触摸屏并监听 `8767`，PC 直接发坐标，不再为每次点击启动 hdc：
+
+```powershell
+# 设备端启动 agent（H264 客户端会自动连 <h264-host>:8767）
+powershell -ExecutionPolicy Bypass -File scripts\start-agent.ps1 -Target <serial> -Token 123456
+
+# 也可显式指定
+python src\app.py --target <serial> --h264 192.168.31.27:8766 --input-agent 192.168.31.27:8767
+```
+
+连不上 agent 时会自动回退到 hdc `uinput`；状态栏会显示“输入 agent”或“输入 hdc”。agent 的 8767 未鉴权，仅在可信局域网使用。
 
 ## 限制
 

@@ -35,6 +35,7 @@ type command struct {
 var (
 	token     string
 	interval  time.Duration
+	touchDev  *TouchDevice
 	framePath = "/data/local/tmp/ohos_agent.jpeg"
 	upgrader  = websocket.Upgrader{
 		ReadBufferSize:  4096,
@@ -150,10 +151,24 @@ func itoa(v int) string {
 }
 
 func uiTap(x, y int) {
+	if touchDev != nil {
+		if err := touchDev.Tap(x, y, 20*time.Millisecond); err == nil {
+			return
+		} else {
+			log.Printf("touch tap: %v", err)
+		}
+	}
 	run("/bin/uinput", "-T", "-c", itoa(x), itoa(y), "10")
 }
 
 func uiSwipe(x1, y1, x2, y2 int) {
+	if touchDev != nil {
+		if err := touchDev.Swipe(x1, y1, x2, y2, 150*time.Millisecond); err == nil {
+			return
+		} else {
+			log.Printf("touch swipe: %v", err)
+		}
+	}
 	run("/bin/uinput", "-T", "-m", itoa(x1), itoa(y1), itoa(x2), itoa(y2), "150")
 }
 
@@ -234,6 +249,8 @@ func localIP() string {
 
 func main() {
 	addr := flag.String("addr", ":8765", "listen address")
+	inputAddr := flag.String("input", ":8767", "raw input listen address (empty to disable)")
+	touchSize := flag.String("touch-size", "1080x2408", "native touch size WxH")
 	tok := flag.String("token", "", "access token (default random)")
 	ms := flag.Int("interval", 50, "capture interval ms")
 	flag.Parse()
@@ -241,6 +258,20 @@ func main() {
 	token = *tok
 	if token == "" {
 		token = fmt.Sprintf("%06d", rand.Intn(1000000))
+	}
+	var touchW, touchH int
+	if _, err := fmt.Sscanf(*touchSize, "%dx%d", &touchW, &touchH); err != nil || touchW <= 0 || touchH <= 0 {
+		touchW, touchH = 1080, 2408
+	}
+	if *inputAddr != "" {
+		var err error
+		touchDev, err = OpenTouchDevice(touchW, touchH)
+		if err != nil {
+			log.Printf("touch device unavailable: %v", err)
+			touchDev = nil
+		} else if err := startInputServer(*inputAddr, touchDev); err != nil {
+			log.Printf("input server: %v", err)
+		}
 	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

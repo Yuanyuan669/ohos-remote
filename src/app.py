@@ -17,6 +17,7 @@ from PIL import Image, ImageTk
 from hdc import Hdc, HdcError, find_hdc
 from mirror import Mirror
 from h264stream import H264Stream
+from agent_input import AgentInput, AgentInputError
 
 
 def parse_size(value: str) -> tuple[int, int]:
@@ -41,7 +42,8 @@ def enable_dpi_awareness() -> None:
 class RemoteApp:
     def __init__(self, root: tk.Tk, hdc_exe: str, target: Optional[str], interval: float,
                  h264: Optional[str] = None, h264_size: tuple[int, int] = (540, 1204),
-                 device_size: Optional[tuple[int, int]] = None, ffmpeg_exe: Optional[str] = None):
+                 device_size: Optional[tuple[int, int]] = None, ffmpeg_exe: Optional[str] = None,
+                 input_agent: Optional[str] = None):
         self.root = root
         self.hdc_exe = hdc_exe
         self.interval = interval
@@ -49,6 +51,8 @@ class RemoteApp:
         self.h264_size = h264_size
         self.device_size = device_size
         self.ffmpeg_exe = ffmpeg_exe
+        self.input_agent = input_agent
+        self.agent_input: Optional[AgentInput] = None
         self.hdc: Optional[Hdc] = None
         self.mirror: Optional[object] = None
         self.frames: "queue.Queue[tuple[str, object]]" = queue.Queue(maxsize=1)
@@ -157,6 +161,15 @@ class RemoteApp:
                 pass
         if self.device_size is None and self.h264:
             self.device_size = (self.h264_size[0] * 2, self.h264_size[1] * 2)
+        agent_addr = self.input_agent
+        if not agent_addr and self.h264:
+            host = self.h264.rsplit(":", 1)[0]
+            agent_addr = f"{host}:8767"
+        if agent_addr:
+            try:
+                self.agent_input = AgentInput(agent_addr)
+            except AgentInputError:
+                self.agent_input = None
         if self.h264:
             self.mirror = H264Stream(self.h264, self.h264_size, self.frames, self.ffmpeg_exe)
         else:
@@ -164,13 +177,17 @@ class RemoteApp:
         self.mirror.start()
         self.connect_btn.configure(text="断开")
         mode = f"H264 {self.h264}" if self.h264 else "快照"
-        self.status_var.set(f"{model or target} · {mode} · 连接中")
+        input_mode = "agent" if self.agent_input else "hdc"
+        self.status_var.set(f"{model or target} · {mode} · 输入 {input_mode} · 连接中")
         self.root.after(30, self.poll)
 
     def disconnect(self) -> None:
         if self.mirror is not None:
             self.mirror.stop()
             self.mirror = None
+        if self.agent_input is not None:
+            self.agent_input.close()
+            self.agent_input = None
         self.hdc = None
         self.connect_btn.configure(text="连接")
         self.status_var.set("未连接")
@@ -214,7 +231,8 @@ class RemoteApp:
             self.canvas.coords(self.photo_item, cw // 2, ch // 2)
             self.canvas.itemconfigure(self.photo_item, image=self.photo)
         native = f" → {self.device_w}x{self.device_h}" if self.device_size else ""
-        self.status_var.set(f"{self.fps:.1f}fps · {img.width}x{img.height}{native}")
+        input_mode = "agent" if self.agent_input else "hdc"
+        self.status_var.set(f"{self.fps:.1f}fps · {img.width}x{img.height}{native} · 输入 {input_mode}")
         self.root.title(f"ohos-remote - {self.target_var.get()}")
 
     def canvas_to_device(self, x: int, y: int) -> Optional[tuple[int, int]]:
@@ -263,11 +281,21 @@ class RemoteApp:
         self.last_click = (dx, dy)
         self._ripple(event.x, event.y)
         try:
-            if abs(event.x - px) + abs(event.y - py) < 12:
+            if self.agent_input is not None:
+                if abs(event.x - px) + abs(event.y - py) < 12:
+                    self.agent_input.tap(dx, dy)
+                else:
+                    self.agent_input.swipe(ox, oy, dx, dy, 200)
+                self.status_var.set(f"agent 输入 {dx},{dy}")
+            elif abs(event.x - px) + abs(event.y - py) < 12:
                 self.hdc.tap(dx, dy)
             else:
                 self.hdc.swipe(ox, oy, dx, dy, 200)
-            self.status_var.set(f"输入 {dx},{dy}")
+            if self.agent_input is None:
+                self.status_var.set(f"uinput 输入 {dx},{dy}")
+        except AgentInputError as exc:
+            self.agent_input = None
+            self.status_var.set("agent 失败，回退 hdc: " + str(exc))
         except HdcError as exc:
             self.status_var.set("输入失败: " + str(exc))
 
@@ -307,6 +335,8 @@ def main() -> None:
     parser.add_argument("--h264-size", default="540x1204", help="decoded H264 size (default 540x1204)")
     parser.add_argument("--device-size", default=None, help="native device size for input, e.g. 1080x2408")
     parser.add_argument("--ffmpeg", default=None, help="path to ffmpeg executable")
+    parser.add_argument("--input-agent", default=None,
+                        help="agent raw input host:port (default: <h264-host>:8767)")
     args = parser.parse_args()
 
     exe = args.hdc or find_hdc()
@@ -319,6 +349,7 @@ def main() -> None:
         h264_size=parse_size(args.h264_size),
         device_size=parse_size(args.device_size) if args.device_size else None,
         ffmpeg_exe=args.ffmpeg,
+        input_agent=args.input_agent,
     )
     root.mainloop()
 

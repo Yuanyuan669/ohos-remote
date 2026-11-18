@@ -23,17 +23,24 @@ src/app.py    Tkinter UI、坐标映射、输入事件
 - **输入**：`uinput -T -c` 默认 click interval 100ms，总耗时约 250ms；传 `-c x y 10` 后约 155ms。`uitest uiInput click` 实测 1.9~2.0s，已不再用于点击。
 - **端到端**：点击到画面更新 ≈ 输入 150~250ms + 等下一帧 0~450ms + 传输/解码约 50ms ≈ 0.2~0.8s。
 - **已做优化**：PC 与 agent 的点击改 `uinput ... 10`，滑动 150ms；agent 抓图间隔默认 50ms；网页点击即时显示波纹，先给操作反馈。
-- **进一步方案**：agent 直接写 `/dev/uinput`（省进程启动）。系统级 `AVScreenCapture` + H264 已跑通（见下）。
+- **已完成**：agent 常驻虚拟触摸屏 + TCP 8767，PC 直接发坐标，不再为每次点击启动 hdc/uinput。系统级 `AVScreenCapture` + H264 已跑通（见下）。
 - 无音频；屏幕旋转/分辨率变化需重新取帧尺寸（当前每帧更新）。
 - 键码已实测：uinput `-K` 用 OHOS 码，2=Back、1=Home；`uitest` 后台运行会挂住，不可用。
 
 ## H264 低延迟模式（2026-11-18 已集成）
 - 设备端 `D:\ohos-screentest`（system_core 自签）：AVScreenCapture 1080x2408 → x264 软编 540x1204 → TCP **8766** 发 Annex-B。
 - PC 端 `src/h264stream.py`：TCP 收流 → ffmpeg 子进程解码 rawvideo → Pillow；`app.py --h264 IP:8766`。
-- 坐标：画面 540x1204 映射回设备 1080x2408（`--device-size`），输入仍走 hdc `uinput`。
+- 坐标：画面 540x1204 映射回设备 1080x2408（自动探测），输入优先走 agent 8767，失败回退 hdc `uinput`。
 - 实测：约 16.7~21fps，1~2Mbps；ffmpeg 解码 20fps 画面正常。
 - 注意：设备端 H264 编码器未注册进 AVCodec（只有 MPEG4），当前用 x264 软编；硬编需改 `codec_caps.xml`/ROM。
 - 后续：把输入切到设备 agent/`/dev/uinput` 进一步降延迟；浏览器端需 WebSocket + MSE/WebCodecs。
+
+## Agent 快速输入（2026-11-18 已集成）
+- agent 启动时通过 `/dev/uinput` 创建常驻虚拟单点触摸屏（`Virtual SingleTouchScreen`，原生 1080x2408），监听 TCP **8767**。
+- PC `src/agent_input.py` 保持长连接，只发 `tap x y` / `swipe ...`，不等 ack；实测发送 <0.1ms，设备侧事件约 20~30ms。
+- `app.py` 默认从 `--h264` 的 host 推导 `:8767`，也可 `--input-agent host:port`；连接失败自动回退 hdc。状态栏显示“输入 agent/hdc”。
+- 对比：`uinput` 工具每次点击 100~140ms（进程启动 + `InputManager::SimulateInputEvent`），已不再用于点击；仅按键/文本保留。
+- 限制：8767 未鉴权，仅可信局域网；agent 重启会重建触摸设备。
 
 ## 后续可选
 - root native server（display HDI + H264 硬编 + hdc fport）提升到 30fps；强绑定 OH 版本。
