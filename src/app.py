@@ -13,20 +13,34 @@ from PIL import Image, ImageTk
 
 from hdc import Hdc, HdcError, find_hdc
 from mirror import Mirror
+from h264stream import H264Stream
+
+
+def parse_size(value: str) -> tuple[int, int]:
+    left, _, right = value.lower().partition("x")
+    return max(1, int(left)), max(1, int(right))
 
 
 class RemoteApp:
-    def __init__(self, root: tk.Tk, hdc_exe: str, target: Optional[str], interval: float):
+    def __init__(self, root: tk.Tk, hdc_exe: str, target: Optional[str], interval: float,
+                 h264: Optional[str] = None, h264_size: tuple[int, int] = (540, 1204),
+                 device_size: Optional[tuple[int, int]] = None, ffmpeg_exe: Optional[str] = None):
         self.root = root
         self.hdc_exe = hdc_exe
         self.interval = interval
+        self.h264 = h264
+        self.h264_size = h264_size
+        self.device_size = device_size
+        self.ffmpeg_exe = ffmpeg_exe
         self.hdc: Optional[Hdc] = None
-        self.mirror: Optional[Mirror] = None
+        self.mirror: Optional[object] = None
         self.frames: "queue.Queue[tuple[str, object]]" = queue.Queue(maxsize=1)
         self.image: Optional[Image.Image] = None
         self.photo: Optional[ImageTk.PhotoImage] = None
         self.device_w = 0
         self.device_h = 0
+        self.image_w = 0
+        self.image_h = 0
         self.last_click = (540, 1200)
         self.press_xy: Optional[tuple[int, int]] = None
         self.fps = 0.0
@@ -105,14 +119,18 @@ class RemoteApp:
         try:
             hdc = Hdc(self.hdc_exe, target)
             model = hdc.model()
-        except (HdcError, OSError) as exc:
+        except (HdcError, OSError, RuntimeError) as exc:
             messagebox.showerror("ohos-remote", "连接失败: " + str(exc))
             return
         self.hdc = hdc
-        self.mirror = Mirror(hdc, self.frames, self.interval)
+        if self.h264:
+            self.mirror = H264Stream(self.h264, self.h264_size, self.frames, self.ffmpeg_exe)
+        else:
+            self.mirror = Mirror(hdc, self.frames, self.interval)
         self.mirror.start()
         self.connect_btn.configure(text="断开")
-        self.status_var.set(f"{model or target} · 连接中")
+        mode = f"H264 {self.h264}" if self.h264 else "快照"
+        self.status_var.set(f"{model or target} · {mode} · 连接中")
         self.root.after(30, self.poll)
 
     def disconnect(self) -> None:
@@ -146,7 +164,8 @@ class RemoteApp:
 
     def show_image(self, img: Image.Image) -> None:
         self.image = img
-        self.device_w, self.device_h = img.size
+        self.image_w, self.image_h = img.size
+        self.device_w, self.device_h = self.device_size or img.size
         cw = max(1, self.canvas.winfo_width())
         ch = max(1, self.canvas.winfo_height())
         scale = min(cw / img.width, ch / img.height)
@@ -155,21 +174,24 @@ class RemoteApp:
         self.photo = ImageTk.PhotoImage(scaled)
         self.canvas.delete("all")
         self.canvas.create_image(cw // 2, ch // 2, image=self.photo, anchor=tk.CENTER)
-        self.status_var.set(f"{self.fps:.1f} fps · {img.width}x{img.height}")
+        native = f" · 设备 {self.device_w}x{self.device_h}" if self.device_size else ""
+        self.status_var.set(f"{self.fps:.1f} fps · {img.width}x{img.height}{native}")
         self.root.title(f"ohos-remote - {self.target_var.get()}")
 
     def canvas_to_device(self, x: int, y: int) -> tuple[int, int]:
-        if self.device_w <= 0:
+        if self.image_w <= 0 or self.device_w <= 0:
             return x, y
         cw = max(1, self.canvas.winfo_width())
         ch = max(1, self.canvas.winfo_height())
-        scale = min(cw / self.device_w, ch / self.device_h)
-        dw = self.device_w * scale
-        dh = self.device_h * scale
+        scale = min(cw / self.image_w, ch / self.image_h)
+        dw = self.image_w * scale
+        dh = self.image_h * scale
         ox = (cw - dw) / 2
         oy = (ch - dh) / 2
-        dx = int((x - ox) / scale)
-        dy = int((y - oy) / scale)
+        rx = (x - ox) / scale
+        ry = (y - oy) / scale
+        dx = int(rx * self.device_w / self.image_w)
+        dy = int(ry * self.device_h / self.image_h)
         return max(0, min(self.device_w - 1, dx)), max(0, min(self.device_h - 1, dy))
 
     def on_press(self, event: tk.Event) -> None:
@@ -226,12 +248,22 @@ def main() -> None:
     parser.add_argument("--hdc", default=None, help="path to hdc executable")
     parser.add_argument("--target", default=None, help="device serial / IP:port")
     parser.add_argument("--fps", type=float, default=2.5, help="capture interval target")
+    parser.add_argument("--h264", default=None, help="H264 TCP endpoint, e.g. 192.168.31.27:8766")
+    parser.add_argument("--h264-size", default="540x1204", help="decoded H264 size (default 540x1204)")
+    parser.add_argument("--device-size", default=None, help="native device size for input, e.g. 1080x2408")
+    parser.add_argument("--ffmpeg", default=None, help="path to ffmpeg executable")
     args = parser.parse_args()
 
     exe = args.hdc or find_hdc()
     interval = 1.0 / max(0.5, args.fps)
     root = tk.Tk()
-    RemoteApp(root, exe, args.target, interval)
+    RemoteApp(
+        root, exe, args.target, interval,
+        h264=args.h264,
+        h264_size=parse_size(args.h264_size),
+        device_size=parse_size(args.device_size) if args.device_size else None,
+        ffmpeg_exe=args.ffmpeg,
+    )
     root.mainloop()
 
 
