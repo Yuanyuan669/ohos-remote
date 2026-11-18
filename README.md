@@ -18,13 +18,13 @@ PC 侧 OpenHarmony 远程查看/控制工具，走 hdc，无需设备端 App/系
 python -m pip install pillow imageio-ffmpeg
 python src\app.py --fps 2.5
 # 或指定设备/hdc：
-python src\app.py --hdc D:\ohos-tools\sdk\openharmony-4.0-Release\toolchains\hdc.exe --target 192.168.31.175:5555
+python src\app.py --hdc D:\ohos-tools\sdk\openharmony-4.0-Release\toolchains\hdc.exe --target 192.168.31.27:5555
 
 # H264 低延迟模式（设备需运行 screentest PoC，端口 8766）
-python src\app.py --target <serial> --h264 192.168.31.27:8766 --h264-size 540x1204 --device-size 1080x2408
+python src\app.py --target <serial> --h264 192.168.31.27:8766 --h264-size 540x1204
 ```
 
-要求：设备已开启 hdc 调试（root/debuggable 更容易），`hdc list targets` 能看到设备。H264 模式仍需 hdc 发送输入；解码用 `imageio-ffmpeg` 自带 ffmpeg，也可 `--ffmpeg <path>`。
+要求：设备已开启 hdc 调试（root/debuggable 更容易），`hdc list targets` 能看到设备。H264 模式仍需 hdc 发送输入；解码用 `imageio-ffmpeg` 自带 ffmpeg，也可 `--ffmpeg <path>`。设备原生分辨率会通过 hdc 自动探测；仍可用 `--device-size 1080x2408` 覆盖。PoC 点 Stop 后采集服务即停止，需重新启动 PoC 再连接客户端。
 
 ## 限制
 

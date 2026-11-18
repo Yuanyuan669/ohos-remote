@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import queue
+import re
+import sys
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -19,6 +22,20 @@ from h264stream import H264Stream
 def parse_size(value: str) -> tuple[int, int]:
     left, _, right = value.lower().partition("x")
     return max(1, int(left)), max(1, int(right))
+
+
+def enable_dpi_awareness() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        return
+    except (AttributeError, OSError):
+        pass
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except (AttributeError, OSError):
+        pass
 
 
 class RemoteApp:
@@ -37,17 +54,23 @@ class RemoteApp:
         self.frames: "queue.Queue[tuple[str, object]]" = queue.Queue(maxsize=1)
         self.image: Optional[Image.Image] = None
         self.photo: Optional[ImageTk.PhotoImage] = None
+        self.photo_item: Optional[int] = None
         self.device_w = 0
         self.device_h = 0
         self.image_w = 0
         self.image_h = 0
-        self.last_click = (540, 1200)
+        self.last_click: Optional[tuple[int, int]] = None
         self.press_xy: Optional[tuple[int, int]] = None
         self.fps = 0.0
         self._last_frame_at = 0.0
 
         root.title("ohos-remote")
-        root.geometry("560x920")
+        screen_w = root.winfo_screenwidth()
+        screen_h = root.winfo_screenheight()
+        win_w = min(640, screen_w - 80)
+        win_h = min(880, screen_h - 200)
+        root.geometry(f"{win_w}x{win_h}+40+40")
+        root.minsize(360, 480)
         root.configure(bg="#0b0f16")
 
         self._build_top()
@@ -64,14 +87,15 @@ class RemoteApp:
         bar.pack(fill=tk.X, padx=8, pady=6)
 
         self.target_var = tk.StringVar()
-        self.combo = ttk.Combobox(bar, textvariable=self.target_var, width=26, state="readonly")
+        self.combo = ttk.Combobox(bar, textvariable=self.target_var, width=22, state="readonly")
         self.combo.pack(side=tk.LEFT)
 
         ttk.Button(bar, text="刷新", command=self.refresh_targets).pack(side=tk.LEFT, padx=4)
         self.connect_btn = ttk.Button(bar, text="连接", command=self.toggle_connect)
         self.connect_btn.pack(side=tk.LEFT, padx=4)
         self.status_var = tk.StringVar(value="未连接")
-        tk.Label(bar, textvariable=self.status_var, fg="#8fa3bd", bg="#0b0f16").pack(side=tk.LEFT, padx=8)
+        tk.Label(self.root, textvariable=self.status_var, fg="#8fa3bd", bg="#0b0f16",
+                 anchor=tk.W, font=("Segoe UI", 9)).pack(fill=tk.X, padx=10, pady=(0, 4))
 
     def _build_canvas(self) -> None:
         self.canvas = tk.Canvas(self.root, bg="#000000", highlightthickness=0)
@@ -82,7 +106,7 @@ class RemoteApp:
 
     def _build_bottom(self) -> None:
         bar = tk.Frame(self.root, bg="#0b0f16")
-        bar.pack(fill=tk.X, padx=8, pady=6)
+        bar.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=6)
 
         tk.Label(bar, text="文本", fg="#8fa3bd", bg="#0b0f16").pack(side=tk.LEFT)
         self.text_var = tk.StringVar()
@@ -123,6 +147,16 @@ class RemoteApp:
             messagebox.showerror("ohos-remote", "连接失败: " + str(exc))
             return
         self.hdc = hdc
+        if self.device_size is None:
+            try:
+                out = hdc.shell("hidumper -s RenderService -a screen", timeout=5)
+                match = re.search(r"render size:\s*(\d+)\s*x\s*(\d+)", out)
+                if match:
+                    self.device_size = (int(match.group(1)), int(match.group(2)))
+            except HdcError:
+                pass
+        if self.device_size is None and self.h264:
+            self.device_size = (self.h264_size[0] * 2, self.h264_size[1] * 2)
         if self.h264:
             self.mirror = H264Stream(self.h264, self.h264_size, self.frames, self.ffmpeg_exe)
         else:
@@ -142,6 +176,8 @@ class RemoteApp:
         self.status_var.set("未连接")
         self.image = None
         self.photo = None
+        self.photo_item = None
+        self.image_w = self.image_h = 0
         self.canvas.delete("all")
 
     def poll(self) -> None:
@@ -172,15 +208,18 @@ class RemoteApp:
         size = (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
         scaled = img.resize(size, Image.BILINEAR)
         self.photo = ImageTk.PhotoImage(scaled)
-        self.canvas.delete("all")
-        self.canvas.create_image(cw // 2, ch // 2, image=self.photo, anchor=tk.CENTER)
-        native = f" · 设备 {self.device_w}x{self.device_h}" if self.device_size else ""
-        self.status_var.set(f"{self.fps:.1f} fps · {img.width}x{img.height}{native}")
+        if self.photo_item is None:
+            self.photo_item = self.canvas.create_image(cw // 2, ch // 2, image=self.photo, anchor=tk.CENTER)
+        else:
+            self.canvas.coords(self.photo_item, cw // 2, ch // 2)
+            self.canvas.itemconfigure(self.photo_item, image=self.photo)
+        native = f" → {self.device_w}x{self.device_h}" if self.device_size else ""
+        self.status_var.set(f"{self.fps:.1f}fps · {img.width}x{img.height}{native}")
         self.root.title(f"ohos-remote - {self.target_var.get()}")
 
-    def canvas_to_device(self, x: int, y: int) -> tuple[int, int]:
+    def canvas_to_device(self, x: int, y: int) -> Optional[tuple[int, int]]:
         if self.image_w <= 0 or self.device_w <= 0:
-            return x, y
+            return None
         cw = max(1, self.canvas.winfo_width())
         ch = max(1, self.canvas.winfo_height())
         scale = min(cw / self.image_w, ch / self.image_h)
@@ -190,9 +229,18 @@ class RemoteApp:
         oy = (ch - dh) / 2
         rx = (x - ox) / scale
         ry = (y - oy) / scale
+        if rx < 0 or ry < 0 or rx > self.image_w or ry > self.image_h:
+            return None
         dx = int(rx * self.device_w / self.image_w)
         dy = int(ry * self.device_h / self.image_h)
         return max(0, min(self.device_w - 1, dx)), max(0, min(self.device_h - 1, dy))
+
+    def _ripple(self, x: int, y: int) -> None:
+        self.canvas.delete("ripple")
+        r = 12
+        self.canvas.create_oval(x - r, y - r, x + r, y + r, outline="#ff5a5f",
+                                width=2, tags="ripple")
+        self.root.after(220, lambda: self.canvas.delete("ripple"))
 
     def on_press(self, event: tk.Event) -> None:
         self.press_xy = (event.x, event.y)
@@ -205,14 +253,21 @@ class RemoteApp:
             return
         px, py = self.press_xy
         self.press_xy = None
-        dx, dy = self.canvas_to_device(event.x, event.y)
-        ox, oy = self.canvas_to_device(px, py)
+        target = self.canvas_to_device(event.x, event.y)
+        origin = self.canvas_to_device(px, py)
+        if target is None or origin is None:
+            self.status_var.set("点击在画面外")
+            return
+        dx, dy = target
+        ox, oy = origin
         self.last_click = (dx, dy)
+        self._ripple(event.x, event.y)
         try:
             if abs(event.x - px) + abs(event.y - py) < 12:
                 self.hdc.tap(dx, dy)
             else:
                 self.hdc.swipe(ox, oy, dx, dy, 200)
+            self.status_var.set(f"输入 {dx},{dy}")
         except HdcError as exc:
             self.status_var.set("输入失败: " + str(exc))
 
@@ -220,7 +275,7 @@ class RemoteApp:
         text = self.text_var.get()
         if self.hdc is None or not text:
             return
-        x, y = self.last_click
+        x, y = self.last_click or (self.device_w // 2, self.device_h // 2)
         try:
             self.hdc.input_text(x, y, text)
             self.text_var.set("")
@@ -256,6 +311,7 @@ def main() -> None:
 
     exe = args.hdc or find_hdc()
     interval = 1.0 / max(0.5, args.fps)
+    enable_dpi_awareness()
     root = tk.Tk()
     RemoteApp(
         root, exe, args.target, interval,
