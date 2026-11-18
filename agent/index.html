@@ -10,6 +10,7 @@ html,body{margin:0;height:100%;background:#0b0f16;color:#e8f0fb;font-family:syst
 #status{color:#8fa3bd;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 #wrap{position:absolute;inset:44px 0 52px 0;display:flex;align-items:center;justify-content:center;background:#000}
 canvas{max-width:100%;max-height:100%;touch-action:none;background:#000}
+#ripple{position:fixed;width:26px;height:26px;border:2px solid #7fd8c8;border-radius:50%;pointer-events:none;transform:translate(-50%,-50%) scale(.6);opacity:.95;transition:transform .25s ease-out,opacity .25s ease-out;z-index:20}
 #bar{position:fixed;left:0;right:0;bottom:0;display:flex;gap:6px;padding:8px;background:#111720}
 #bar input{flex:1;min-width:0;background:#151d29;color:#e8f0fb;border:1px solid #24324a;border-radius:8px;padding:8px;font-size:13px}
 button{background:#1e2b40;color:#dce7f7;border:0;border-radius:8px;padding:8px 10px;font-size:12px}
@@ -72,7 +73,24 @@ function toDevice(ev) {
   return [Math.max(0, Math.min(devW - 1, Math.round(x))), Math.max(0, Math.min(devH - 1, Math.round(y)))];
 }
 
-canvas.addEventListener('pointerdown', (e) => { press = [e.clientX, e.clientY]; canvas.setPointerCapture(e.pointerId); });
+function ping(cx, cy) {
+  const el = document.createElement('div');
+  el.id = 'ripple';
+  el.style.left = cx + 'px';
+  el.style.top = cy + 'px';
+  document.body.appendChild(el);
+  requestAnimationFrame(() => {
+    el.style.transform = 'translate(-50%,-50%) scale(1.7)';
+    el.style.opacity = '0';
+  });
+  setTimeout(() => el.remove(), 280);
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  press = [e.clientX, e.clientY];
+  canvas.setPointerCapture(e.pointerId);
+  ping(e.clientX, e.clientY);
+});
 canvas.addEventListener('pointerup', (e) => {
   if (!press || !ws || ws.readyState !== 1) return;
   const p0 = press;
@@ -95,7 +113,7 @@ document.getElementById('send').onclick = () => {
   el.value = '';
 };
 
-document.getElementById('back').onclick = () => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'key', code: 158 })); };
+document.getElementById('back').onclick = () => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'key', code: 2 })); };
 document.getElementById('home').onclick = () => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'key', code: 1 })); };
 
 connect();

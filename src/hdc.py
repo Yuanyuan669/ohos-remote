@@ -98,17 +98,17 @@ class Hdc:
                 pass
 
     def tap(self, x: int, y: int) -> None:
-        self.shell(f"uitest uiInput click {x} {y}")
+        self.shell(f"uinput -T -c {x} {y} 10")
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 200) -> None:
-        self.shell(f"uitest uiInput swipe {x1} {y1} {x2} {y2} {duration_ms}")
+        self.shell(f"uinput -T -m {x1} {y1} {x2} {y2} {duration_ms}")
 
     def input_text(self, x: int, y: int, text: str) -> None:
         safe = text.replace("\n", " ")
         self.shell(f"uitest uiInput inputText {x} {y} '{safe}'")
 
     def key_event(self, code: int) -> None:
-        self.shell(f"uitest uiInput keyEvent {code}")
+        self.shell(f"uinput -K -d {code} -u {code}")
 
     def model(self) -> str:
         try:

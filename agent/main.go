@@ -150,11 +150,11 @@ func itoa(v int) string {
 }
 
 func uiTap(x, y int) {
-	run("/bin/uinput", "-T", "-c", itoa(x), itoa(y))
+	run("/bin/uinput", "-T", "-c", itoa(x), itoa(y), "10")
 }
 
 func uiSwipe(x1, y1, x2, y2 int) {
-	run("/bin/uinput", "-T", "-m", itoa(x1), itoa(y1), itoa(x2), itoa(y2), "300")
+	run("/bin/uinput", "-T", "-m", itoa(x1), itoa(y1), itoa(x2), itoa(y2), "150")
 }
 
 func uiKey(code int) {
@@ -235,7 +235,7 @@ func localIP() string {
 func main() {
 	addr := flag.String("addr", ":8765", "listen address")
 	tok := flag.String("token", "", "access token (default random)")
-	ms := flag.Int("interval", 250, "capture interval ms")
+	ms := flag.Int("interval", 50, "capture interval ms")
 	flag.Parse()
 	interval = time.Duration(*ms) * time.Millisecond
 	token = *tok

@@ -6,7 +6,7 @@ PC 侧 OpenHarmony 远程查看/控制工具，走 hdc，无需设备端 App/系
 
 - 设备发现（USB / hdc TCP）
 - 实时画面：`snapshot_display` 截图循环（约 2~3 fps，1080x2408）
-- 鼠标点击/拖拽 → `uitest uiInput click/swipe`
+- 鼠标点击/拖拽 → `uinput`（click interval 10ms，低延迟）
 - 文本发送 → `uitest uiInput inputText`
 - 保存当前截图为 PNG
 - 返回键：uinput `-K` 键码 **2=Back，1=Home**（本机已实测）
@@ -24,7 +24,7 @@ python src\app.py --hdc D:\ohos-tools\sdk\openharmony-4.0-Release\toolchains\hdc
 
 ## 限制
 
-- 无音频；2~3 fps，适合操作/演示，不适合视频。
+- 无音频；2~3 fps，适合操作/演示，不适合视频。抓图单帧约 400~450ms 是主要瓶颈。
 - 依赖 `snapshot_display` / `uitest`，不同 OH 版本参数可能不同。
 - hdc TCP 模式会暴露调试权限，注意网络安全。
 - 完整设计见 `docs/PLAN.md`。
