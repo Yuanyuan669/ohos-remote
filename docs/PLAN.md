@@ -33,7 +33,14 @@ src/app.py    Tkinter UI、坐标映射、输入事件
 - 坐标：画面 540x1204 映射回设备 1080x2408（自动探测），输入优先走 agent 8767，失败回退 hdc `uinput`。
 - 实测：约 16.7~21fps，1~2Mbps；ffmpeg 解码 20fps 画面正常。
 - 注意：设备端 H264 编码器未注册进 AVCodec（只有 MPEG4），当前用 x264 软编；硬编需改 `codec_caps.xml`/ROM。
-- 后续：把输入切到设备 agent/`/dev/uinput` 进一步降延迟；浏览器端需 WebSocket + MSE/WebCodecs。
+- 后续：浏览器端需 WebSocket + MSE/WebCodecs。
+
+## 分辨率档位参数化（2026-11-18 已集成）
+- 设备端 `Start(basePath, profile)` 接受 `540p`（默认）、`360p`、`180p` 或 `WxH@kbps`；编码宽高、fps、码率、x264/AVScreenCapture 配置全部由 profile 决定。
+- 设备 UI 提供 `540p / 180p / 360p` 按钮，切换时 stop → start。
+- PC 端 `--profile` 选择对应解码尺寸；`--h264-size` 仍可覆盖。
+- 实测：540p 约 22fps/2Mbps；180p（180x402/600kbps）约 20.5fps。降分辨率**没有提升 fps**，说明瓶颈在 AVScreenCapture 回调/合成（~20fps），不在缩放或 x264。
+- NEON 缩放对当前 20fps 上限收益有限；若继续做，应优先查 AVScreenCapture 出帧节奏/减少每帧 RGBA map+memcpy。NEON 可作为独立 scaler 选项保留。
 
 ## Agent 快速输入（2026-11-18 已集成）
 - agent 启动时通过 `/dev/uinput` 创建常驻虚拟单点触摸屏（`Virtual SingleTouchScreen`，原生 1080x2408），监听 TCP **8767**。

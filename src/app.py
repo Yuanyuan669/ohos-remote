@@ -20,6 +20,13 @@ from h264stream import H264Stream
 from agent_input import AgentInput, AgentInputError
 
 
+PROFILES = {
+    "540p": (540, 1204),
+    "180p": (180, 402),
+    "360p": (360, 802),
+}
+
+
 def parse_size(value: str) -> tuple[int, int]:
     left, _, right = value.lower().partition("x")
     return max(1, int(left)), max(1, int(right))
@@ -160,7 +167,7 @@ class RemoteApp:
             except HdcError:
                 pass
         if self.device_size is None and self.h264:
-            self.device_size = (self.h264_size[0] * 2, self.h264_size[1] * 2)
+            self.device_size = (1080, 2408)
         agent_addr = self.input_agent
         if not agent_addr and self.h264:
             host = self.h264.rsplit(":", 1)[0]
@@ -332,7 +339,10 @@ def main() -> None:
     parser.add_argument("--target", default=None, help="device serial / IP:port")
     parser.add_argument("--fps", type=float, default=2.5, help="capture interval target")
     parser.add_argument("--h264", default=None, help="H264 TCP endpoint, e.g. 192.168.31.27:8766")
-    parser.add_argument("--h264-size", default="540x1204", help="decoded H264 size (default 540x1204)")
+    parser.add_argument("--profile", choices=sorted(PROFILES), default=None,
+                        help="stream profile; must match device screentest selection")
+    parser.add_argument("--h264-size", default=None,
+                        help="decoded H264 size override (default: from --profile / 540x1204)")
     parser.add_argument("--device-size", default=None, help="native device size for input, e.g. 1080x2408")
     parser.add_argument("--ffmpeg", default=None, help="path to ffmpeg executable")
     parser.add_argument("--input-agent", default=None,
@@ -346,7 +356,7 @@ def main() -> None:
     RemoteApp(
         root, exe, args.target, interval,
         h264=args.h264,
-        h264_size=parse_size(args.h264_size),
+        h264_size=parse_size(args.h264_size) if args.h264_size else PROFILES[args.profile or "540p"],
         device_size=parse_size(args.device_size) if args.device_size else None,
         ffmpeg_exe=args.ffmpeg,
         input_agent=args.input_agent,

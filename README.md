@@ -21,8 +21,21 @@ python src\app.py --fps 2.5
 python src\app.py --hdc D:\ohos-tools\sdk\openharmony-4.0-Release\toolchains\hdc.exe --target 192.168.31.27:5555
 
 # H264 低延迟模式（设备需运行 screentest PoC，端口 8766）
-python src\app.py --target <serial> --h264 192.168.31.27:8766 --h264-size 540x1204
+# 默认 540p；设备端 UI 选 180p/360p 时，这里加对应 --profile
+python src\app.py --target <serial> --h264 192.168.31.27:8766 --profile 540p
 ```
+
+### 分辨率档位
+
+设备端 screentest 顶部有 `540p / 180p / 360p` 按钮，点击会停止并用新档位重启采集；PC 端必须用相同 `--profile`：
+
+| profile | 编码分辨率 | 码率 | 实测 |
+| --- | --- | --- | --- |
+| `540p` | 540x1204 | 2 Mbps | ~22fps |
+| `360p` | 360x802 | 1.2 Mbps | 约 20fps |
+| `180p` | 180x402 | 600 kbps | ~20.5fps，画面明显变糊 |
+
+180p 主要降低带宽/解码开销，**不会提高刷新率**：当前 20fps 上限来自 AVScreenCapture/合成回调，不是 x264 降采样。也可用 `WxH@kbps` 形式传给设备端 `start()` 自定义档位。
 
 要求：设备已开启 hdc 调试（root/debuggable 更容易），`hdc list targets` 能看到设备。解码用 `imageio-ffmpeg` 自带 ffmpeg，也可 `--ffmpeg <path>`。设备原生分辨率会通过 hdc 自动探测；仍可用 `--device-size 1080x2408` 覆盖。PoC 点 Stop 后采集服务即停止，需重新启动 PoC 再连接客户端。
 
